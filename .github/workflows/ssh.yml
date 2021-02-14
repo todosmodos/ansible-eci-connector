@@ -10,11 +10,13 @@ jobs:
     steps:
       - uses:            mxschmitt/action-tmate@v3
         timeout-minutes: 30
+#         with:
+#           limit-access-to-actor: true
+
+
       - uses: actions/upload-artifact@v2
         with:
           name: filo          
           path: output.gz
-#         with:
-#           limit-access-to-actor: true
 
      

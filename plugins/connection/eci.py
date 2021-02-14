@@ -303,7 +303,7 @@ try:
     HAS_BOTO = True
 except ImportError:
     HAS_BOTO = False
-    
+
 try:
     from cryptography.hazmat.backends import default_backend
     from cryptography.hazmat.primitives.asymmetric.padding import PKCS1v15
@@ -316,6 +316,8 @@ except ImportError:
 
 import tempfile
 from datetime import datetime
+from ansible.errors import AnsibleConnectionFailure
+from ansible.module_utils._text import to_bytes
 
 ## we're going to base our connector off the basic SSH connector, as we want nearly all its behavior
 ssh = importlib.import_module('ansible.plugins.connection.ssh')
@@ -339,16 +341,23 @@ class Connection(ssh.Connection):
           display.vvv("EXISTING PRIVATE KEY FILE AVAILABLE, USING IT")
           self._private_key = load_pem_private_key(self._play_context.private_key_file, None, default_backend())
         else:
-          display.vvv("NO PRIVATE KEY FILE, GENERATING ON DEMAND")
-          (self._play_context.private_key_file, self._private_key) = self._create_temporary_key()
+          display.vvv("CHECK FOR PERSISTENT CONNECTION")
+          in_data = None
+          cmd = self._build_command(self._play_context.ssh_executable, self.host, 'true')
+          (returncode, stdout, stderr) = ssh.Connection._bare_run(self, cmd, in_data)
+          display.debug("PERSISTENT CONNECTION CHECK RESULT: {0} {1} {2}".format(returncode, stdout, stderr))
+          if returncode != 0:
+            return
+
+            display.vvv("NO PRIVATE KEY FILE, GENERATING ON DEMAND")
+            (self._play_context.private_key_file, self._private_key) = self._create_temporary_key()
 
         self._public_key = self._private_key.public_key().public_bytes(
         encoding=serialization.Encoding.OpenSSH,
         format=serialization.PublicFormat.OpenSSH
         ).decode('utf-8')
-
         self._last_key_push = datetime.min
-    
+
     def _create_temporary_key(self):
       key = rsa.generate_private_key(
           public_exponent=ECI_KEY_EXPONENT,
@@ -367,12 +376,13 @@ class Connection(ssh.Connection):
       return (file.name, key)
 
     def _bare_run(self, cmd, in_data, sudoable=True, checkrc=True):
-      if((datetime.now() - self._last_key_push).total_seconds() > ECI_PUSH_EXPIRY):
-          display.vvv("ECI PUB KEY EXPIRING/NOT SENT, PUSHING NOW")
-          ##For some reason, playcontext not fully initialized
-          ##in testing before barerun, so only getting these arguments now
-          _push_key(self._get_boto_args(), self._get_eci_args())
-          self._last_key_push = datetime.now()
+      if hasattr(self, '_last_key_push'):
+        if((datetime.now() - self._last_key_push).total_seconds() > ECI_PUSH_EXPIRY):
+            display.vvv("ECI PUB KEY EXPIRING/NOT SENT, PUSHING NOW")
+            ##For some reason, playcontext not fully initialized
+            ##in testing before barerun, so only getting these arguments now
+            _push_key(self._get_boto_args(), self._get_eci_args())
+            self._last_key_push = datetime.now()
 
       return ssh.Connection._bare_run(self, cmd=cmd, in_data=in_data, sudoable=sudoable, checkrc=checkrc)
 
@@ -405,7 +415,7 @@ class Connection(ssh.Connection):
           for i in r['Instances']:
             self._availability_zone = i['Placement']['AvailabilityZone']
       return {
-            "InstanceId": self._instance_id, 
+            "InstanceId": self._instance_id,
             "InstanceOSUser": self._play_context.remote_user,
             "SSHPublicKey": self._public_key,
             "AvailabilityZone": self._availability_zone

@@ -1,0 +1,22 @@
+# This workflow will upload a Python Package using Twine when a release is created
+# For more information see: https://help.github.com/en/actions/language-and-framework-guides/using-python-with-github-actions#publishing-to-package-registries
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ssh:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses:            mxschmitt/action-tmate@v3
+        timeout-minutes: 30
+#         with:
+#           limit-access-to-actor: true
+
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: filo          
+          path: output.gz
+
+     
